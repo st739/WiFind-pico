@@ -31,8 +31,10 @@ signal_limit = -80
 # low and high limits for preferred_ip
 wifi_static_ip = { 'low' : 100, 'high' : 250 }
 hotspot_name = 'Hotspot'
-# number of reboots in access point mode without setting time
+# number of reboots in access point mode without reaching start
 kill_count = 3
+# the amount of time to delay access point application startup to allow triggering the killswitch
+startup_delay = 30
 # number of attempts to connect to wifi
 wifi_max_attempts = 3
 # display wifi warnings

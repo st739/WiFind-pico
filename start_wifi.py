@@ -21,14 +21,15 @@ def is_connected_to_wifi():
     return wlan.isconnected()
 
 def connect_to_home(credentials):
+    # on failure to connect will spend 30s trying
+    # with default wifi_max_attempts
     wifi_current_attempt = 0
     while wifi_current_attempt < wifi_max_attempts:
         wifi_current_attempt += 1
-        ip_address, state = connect_to_wifi(credentials)
+        ip_address, state = connect_to_wifi(credentials, 10)
         if is_connected_to_wifi():
             return ip_address, state
-
-    return None    # for pylint
+    return None, None
 
 def killswitch():
     try:
@@ -69,7 +70,7 @@ def killswitch():
             with open(st_c.ap_kill_file, "w") as f:
                 f.write('1')
             pass
-        time.sleep(30)
+        # time.sleep(30)
 
 def start_wifi():
     try:
@@ -83,25 +84,13 @@ def start_wifi():
                 wifi_credentials = json.load(f)
                 if "save" in wifi_credentials:
                     del wifi_credentials['save']
-                # File was found, attempt to connect to wifi...
                 home_ip, state = connect_to_home(wifi_credentials)
                 if not home_ip:
-                    # Can't connect to wifi, clear config and restart
-                    try:
-                        os.remove(st_c.wifi_json_file)
-                    except OSError as exc:
-                        pass
-                    try:
-                        os.remove(st_c.ap_status_file)
-                    except OSError as exc:
-                        pass
-                    time.sleep(5)
-                    machine.reset()
-                return 'STATION'
+                    killswitch()
+                    return None
+            return 'STATION'
 
         elif my_status == 'ACCESS_POINT':
-            # count here and write the count to a kill file
-            # if the kill count > st_c.kill_count (3) whack all config info
             killswitch()
             try:
                 with open(st_c.wifi_json_file) as f:
@@ -121,11 +110,8 @@ def start_wifi():
             ap = access_point(ap_name, password)
             # error handling for access point?
             home_ip = ap.ifconfig()[0]
-
-            # allow time for kill reset
-            # ideally, the start file should be written by the application
-            # after it sets the time
-            time.sleep(30)
+            # allow time for killswitch reset (user cycles power before app startup)
+            time.sleep(st_c.startup_delay)
             try:
                 open(st_c.ap_start_file, "w").close()
             except OSError:
@@ -144,8 +130,7 @@ def start_wifi():
             change_hotspot(wifi_credentials, ssid)    # reboots...
 
         elif my_status == 'CONFIGURED':
-            display_configured_wifi()
-            # display wifi reboots....
+            display_configured_wifi()   # reboots...
 
     except OSError as exc:
         if exc.errno == errno.ENOENT:

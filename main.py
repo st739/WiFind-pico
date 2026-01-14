@@ -16,5 +16,5 @@ def init_dirs(dirs):
             os.mkdir(d)
 
 init_dirs(st_c.config_dirs)
-result = start_wifi()
-asyncio.run(start_app())
+wifi_type = start_wifi() # STATION, ACCESS_POINT or None
+wifi_type and asyncio.run(start_app(wifi_type))

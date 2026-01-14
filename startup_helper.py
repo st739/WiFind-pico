@@ -17,15 +17,12 @@ import machine
 import os
 import network
 import json
-import utime
-import uselect
-import uctypes
-import usocket
-import ustruct
-import urandom
 import binascii
 import re
-from microdot.microdot import Microdot, send_file
+# external imports
+from external.microdot import Microdot, send_file
+from external.uping import ping
+
 from wifi_pages import render_configure_wifi, render_configured_wifi, render_change_hotspot
 import startup_cfg as st_c
 
@@ -35,7 +32,7 @@ def scan_ssids():
     try:
         wlan = network.WLAN(network.STA_IF)
         wlan.active(True)
-    except OSError as exc:
+    except OSError:
         aps = None
 
     repeats = st_c.scan_count
@@ -45,10 +42,9 @@ def scan_ssids():
     for i in range(repeats):
         try:
             aps = wlan.scan()
-        except OSError as exc:
+        except OSError:
             aps = None
 
-        # 2.4GHz channels 1, 6 and 11 don't overlap
         for ap in aps:
             ssid = ap[0].decode()
             if not ssid:
@@ -71,7 +67,7 @@ def scan_ssids():
 
     wifi_json = {"access_points": []}
     wifi_json["warn"] = []
-    # weak networks - below st_c.signal_limit (-70) are ignored
+    # weak networks - below st_c.signal_limit (-80) are ignored
     poor = ''
     access_sort = {}
     for ssid, stren in strength.items():
@@ -189,119 +185,30 @@ def connect_to_wifi(credentials, timeout_seconds=30):
 
     l_ifconfig = list(wlan.ifconfig())
 
+    state = "Desired"
     # construct and ping our preferred IP
+    # if the preferred IP is in use, increment and try again
     base_ip = '.'.join(wlan.ifconfig()[0].split('.')[0:3]) # 1st 3 octets of IP
     start_ip = int(preferred_ip.split('.')[-1])
     for i in range (start_ip, start_ip + 4):
         desired_ip = base_ip + '.' + str(i)
-        sent, rec = ping(desired_ip, 3, 5000, 10, False, 64)
+        # ping delay = 100ms, quiet = True
+        print(f"ping {desired_ip}")
+        sent, rec = ping(desired_ip, 3, 5000, 100, True, 64)
         if rec == 0:
             l_ifconfig[0] = desired_ip
             wlan.ifconfig(tuple(l_ifconfig))
             if wlan.ifconfig()[0] == desired_ip:
-                wlan.active(False)
-                return desired_ip, None
-
-    rc = None
-    wlan.active(False)
-    return rc, "In_use"
-
-# µPing (MicroPing) for MicroPython
-# copyright (c) 2018 Shawwwn <shawwwn1@gmail.com>
-# License: MIT
-
-# Internet Checksum Algorithm
-# Author: Olav Morken
-# https://github.com/olavmrk/python-ping/blob/master/ping.py
-# @data: bytes
-def checksum(data):
-    if len(data) & 0x1: # Odd number of bytes
-        data += b'\0'
-    cs = 0
-    for pos in range(0, len(data), 2):
-        b1 = data[pos]
-        b2 = data[pos + 1]
-        cs += (b1 << 8) + b2
-    while cs >= 0x10000:
-        cs = (cs & 0xffff) + (cs >> 16)
-    cs = ~cs & 0xffff
-    return cs
-
-def ping(host, count=4, timeout=5000, interval=10, quiet=False, size=64):
-
-    # prepare packet
-    assert size >= 16, "pkt size too small"
-    pkt = b'Q'*size
-    pkt_desc = {
-        "type": uctypes.UINT8 | 0,
-        "code": uctypes.UINT8 | 1,
-        "checksum": uctypes.UINT16 | 2,
-        "id": uctypes.UINT16 | 4,
-        "seq": uctypes.INT16 | 6,
-        "timestamp": uctypes.UINT64 | 8,
-    } # packet header descriptor
-    h = uctypes.struct(uctypes.addressof(pkt), pkt_desc, uctypes.BIG_ENDIAN)
-    h.type = 8 # ICMP_ECHO_REQUEST
-    h.code = 0
-    h.checksum = 0
-    h.id = urandom.getrandbits(16)
-    h.seq = 1
-
-    # init socket
-    sock = usocket.socket(usocket.AF_INET, usocket.SOCK_RAW, 1)
-    sock.setblocking(0)
-    sock.settimeout(timeout/1000)
-    addr = usocket.getaddrinfo(host, 1)[0][-1][0] # ip address
-    sock.connect((addr, 1))
-
-    seqs = list(range(1, count+1)) # [1,2,...,count]
-    c = 1
-    t = 0
-    n_trans = 0
-    n_recv = 0
-    finish = False
-    while t < timeout:
-        if t==interval and c<=count:
-            # send packet
-            h.checksum = 0
-            h.seq = c
-            h.timestamp = utime.ticks_us()
-            h.checksum = checksum(pkt)
-            if sock.send(pkt) == size:
-                n_trans += 1
-                t = 0 # reset timeout
-            else:
-                seqs.remove(c)
-            c += 1
-
-        # recv packet
-        while 1:
-            socks, _, _ = uselect.select([sock], [], [], 0)
-            if socks:
-                resp = socks[0].recv(4096)
-                resp_mv = memoryview(resp)
-                h2 = uctypes.struct(uctypes.addressof(resp_mv[20:]), pkt_desc, uctypes.BIG_ENDIAN)
-                seq = h2.seq
-                if h2.type==0 and h2.id==h.id and (seq in seqs): # 0: ICMP_ECHO_REPLY
-                    t_elapsed = (utime.ticks_us()-h2.timestamp) / 1000
-                    ttl = ustruct.unpack('!B', resp_mv[8:9])[0] # time-to-live
-                    n_recv += 1
-                    seqs.remove(seq)
-                    if len(seqs) == 0:
-                        finish = True
-                        break
-            else:
+                state = "Available"
                 break
+        else:
+            state = "In_use"
 
-        if finish:
-            break
+    rc = wlan.ifconfig()[0]
+    wlan.active(False)
+    print(f"return rc [{rc}], state [{state}]")
+    return rc, state
 
-        utime.sleep_ms(1)
-        t += 1
-
-    # close
-    sock.close()
-    return (n_trans, n_recv)
 
 def setup_wifi():
     ap_cfg = Microdot()
@@ -342,14 +249,11 @@ def setup_wifi():
             wifi_json["wifi_pass"] = creds['wifi_pass'].strip()
             wifi_json["preferred_ip"] = creds['preferred_ip'].strip()
             # in order to get here, save must be set
-            if len(wifi_json["wifi_pass"]) == 0 :
-                errors.append('please enter a password')
-            elif len(wifi_json["wifi_pass"]) < 8:
-                errors.append('password too short, try again')
-                wifi_json["wifi_pass"] = ''
-
             # because it's a list box, ssid must be in creds
             if wifi_json["ssid"] == st_c.hotspot_name:
+                if len(wifi_json["wifi_pass"]) < 8:
+                    errors.append('password must be > 8 characters')
+                    wifi_json["wifi_pass"] = ''
                 if wifi_json["preferred_ip"]:
                     errors.append("Hotspot can't have preferred ip")
                     wifi_json["preferred_ip"] = ''
@@ -384,10 +288,19 @@ def setup_wifi():
                     # we might not have got the preferred_ip because it was in use
                     # but we would get a higher ip.
                     # unless there were many occupied consecutive addresses
-                    credentials['preferred_ip'] = home_ip
-                    with open(st_c.wifi_json_file, "w") as f:
-                        json.dump(credentials, f)
-                        f.close()
+                    if state == 'In_use':
+                        with open(st_c.error_file, "w") as f:
+                            el = f"Can't connect to {wifi_json["ssid"]}"
+                            if wifi_json["preferred_ip"]:
+                                el += f' using address {wifi_json["preferred_ip"]}'
+                            el += '\n'
+                            f.write(el)
+                            f.write("Address in use\n")
+                    else:
+                        credentials['preferred_ip'] = home_ip
+                        with open(st_c.wifi_json_file, "w") as f:
+                            json.dump(credentials, f)
+                            f.close()
 
                     with open(st_c.ap_status_file, "w") as f:
                         f.write("CONFIGURED")
@@ -416,6 +329,7 @@ def setup_wifi():
         return send_file(f"{st_c.configure_wifi_html_file}")
 
     ap = access_point(st_c.hotspot_name)
+    print(f"hotspot wlan [{ap}]")
     # ip = ap.ifconfig()[0]
     ap_cfg.run(port=80)
 
@@ -437,7 +351,8 @@ def display_configured_wifi():
                 creds = json.load(f)
                 ssid = creds['ssid']
                 ip = creds['preferred_ip']
-        except OSError as exc:
+        except OSError:
+        # except OSError as exc:
             ssid = 'unknown'
             ip = 'unknown'
             mac = 'unknown'
@@ -475,7 +390,7 @@ def display_configured_wifi():
         return send_file(f"{st_c.configured_wifi_html_file}")
 
     ap = access_point(st_c.hotspot_name)
-    # ip = ap.ifconfig()[0]
+    print(f"hotspot wlan [{ap}]")
     ap_cfg.run(port=80)
 
 def change_hotspot(wifi_json, ssid):
@@ -512,8 +427,9 @@ def change_hotspot(wifi_json, ssid):
         with open(st_c.wifi_json_file) as f:
             creds = json.load(f)
             ssid = creds['ssid']
-    except OSError as exc:
+    except OSError:
+    # except OSError as exc:
         ssid = st_c.hotspot_name
     ap = access_point(ssid)
-    ip = ap.ifconfig()[0]
+    print(f"ssid wlan [{ap}]")
     ap_cfg.run(port=80)
