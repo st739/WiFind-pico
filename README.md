@@ -9,6 +9,5 @@ or doesn't want to bother.
 
 ## Resources
 
-Short howto         HOWTO.md
+Short howto         HOWTO.md  
 Documentation       DOCS.md
-License             LICENSE
