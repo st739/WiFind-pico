@@ -193,7 +193,6 @@ def connect_to_wifi(credentials, timeout_seconds=30):
     for i in range (start_ip, start_ip + 4):
         desired_ip = base_ip + '.' + str(i)
         # ping delay = 100ms, quiet = True
-        print(f"ping {desired_ip}")
         sent, rec = ping(desired_ip, 3, 5000, 100, True, 64)
         if rec == 0:
             l_ifconfig[0] = desired_ip
@@ -205,8 +204,6 @@ def connect_to_wifi(credentials, timeout_seconds=30):
             state = "In_use"
 
     rc = wlan.ifconfig()[0]
-    wlan.active(False)
-    print(f"return rc [{rc}], state [{state}]")
     return rc, state
 
 
@@ -328,9 +325,6 @@ def setup_wifi():
         render_configure_wifi(wifi_json, errors)
         return send_file(f"{st_c.configure_wifi_html_file}")
 
-    ap = access_point(st_c.hotspot_name)
-    print(f"hotspot wlan [{ap}]")
-    # ip = ap.ifconfig()[0]
     ap_cfg.run(port=80)
 
 def my_mac():
@@ -389,8 +383,6 @@ def display_configured_wifi():
         render_configured_wifi(ssid, ip, mac, errors)
         return send_file(f"{st_c.configured_wifi_html_file}")
 
-    ap = access_point(st_c.hotspot_name)
-    print(f"hotspot wlan [{ap}]")
     ap_cfg.run(port=80)
 
 def change_hotspot(wifi_json, ssid):
@@ -430,6 +422,4 @@ def change_hotspot(wifi_json, ssid):
     except OSError:
     # except OSError as exc:
         ssid = st_c.hotspot_name
-    ap = access_point(ssid)
-    print(f"ssid wlan [{ap}]")
     ap_cfg.run(port=80)
